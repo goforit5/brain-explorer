@@ -1,0 +1,970 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Brain Explorer — AEOS</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    [x-cloak] { display: none !important; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif; }
+    .card-expand { animation: slideDown 0.25s ease-out; }
+    @keyframes slideDown { from { opacity: 0; max-height: 0; } to { opacity: 1; max-height: 2000px; } }
+    .scrollbar-thin::-webkit-scrollbar { width: 4px; }
+    .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+    .scrollbar-thin::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 2px; }
+    .node-badge { font-size: 0.65rem; padding: 2px 7px; border-radius: 9999px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
+    .confidence-bar { height: 4px; border-radius: 2px; background: #374151; }
+    .confidence-fill { height: 100%; border-radius: 2px; transition: width 0.3s; }
+    .md-content h1 { font-size: 1.25rem; font-weight: 700; margin: 0.75rem 0 0.5rem; }
+    .md-content h2 { font-size: 1.1rem; font-weight: 600; margin: 0.6rem 0 0.4rem; }
+    .md-content h3 { font-size: 1rem; font-weight: 600; margin: 0.5rem 0 0.3rem; }
+    .md-content p { margin: 0.4rem 0; line-height: 1.6; }
+    .md-content ul, .md-content ol { margin: 0.4rem 0; padding-left: 1.5rem; }
+    .md-content li { margin: 0.15rem 0; }
+    .md-content code { background: #1f2937; color: #e5e7eb; padding: 1px 5px; border-radius: 3px; font-size: 0.85em; }
+    .md-content pre { background: #111827; color: #e5e7eb; padding: 0.75rem; border-radius: 6px; overflow-x: auto; margin: 0.5rem 0; }
+    .md-content pre code { background: none; padding: 0; }
+    .md-content a { color: #60a5fa; text-decoration: underline; }
+    .md-content blockquote { border-left: 3px solid #4b5563; padding-left: 0.75rem; color: #9ca3af; margin: 0.5rem 0; }
+    .md-content table { border-collapse: collapse; width: 100%; margin: 0.5rem 0; }
+    .md-content th, .md-content td { border: 1px solid #374151; padding: 0.35rem 0.6rem; text-align: left; }
+    .md-content th { background: #1f2937; }
+    .graph-tooltip { position: absolute; pointer-events: none; background: #1f2937; color: #e5e7eb; padding: 6px 10px; border-radius: 6px; font-size: 0.8rem; box-shadow: 0 4px 12px rgba(0,0,0,0.4); z-index: 100; }
+    svg text { user-select: none; }
+    .tab-active { border-bottom: 2px solid #3b82f6; color: #3b82f6; }
+    .tab-inactive { border-bottom: 2px solid transparent; color: #9ca3af; }
+    .tab-inactive:hover { color: #d1d5db; }
+    .stat-card { background: linear-gradient(135deg, #1f2937 0%, #111827 100%); }
+    .bar-segment { transition: width 0.5s ease-out; }
+  </style>
+</head>
+<body class="bg-gray-950 text-gray-200 min-h-screen" x-data="explorer()" x-init="init()" x-cloak>
+
+  <!-- Header -->
+  <header class="bg-gray-900 border-b border-gray-800 sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center">
+          <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path></svg>
+        </div>
+        <div>
+          <h1 class="text-lg font-semibold text-white leading-tight">Brain Explorer</h1>
+          <p class="text-xs text-gray-500">AEOS Knowledge Graph</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-2 text-xs text-gray-500">
+        <span x-text="totalNodes + ' nodes'"></span>
+        <span class="text-gray-700">|</span>
+        <span x-text="totalEdges + ' edges'"></span>
+      </div>
+    </div>
+    <!-- Tabs -->
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 flex gap-1">
+      <template x-for="tab in ['browse','graph','wiki','health']" :key="tab">
+        <button @click="switchTab(tab)" class="px-4 py-2 text-sm font-medium capitalize transition-colors"
+          :class="currentTab === tab ? 'tab-active' : 'tab-inactive'" x-text="tab"></button>
+      </template>
+    </div>
+  </header>
+
+  <!-- Filter Bar (shared across views) -->
+  <div class="bg-gray-900/60 border-b border-gray-800 sticky top-[89px] z-40">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 py-2 flex flex-wrap items-center gap-2">
+      <input type="text" x-model.debounce.300ms="searchQuery" placeholder="Search nodes..."
+        class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-200 placeholder-gray-500 w-48 sm:w-64 focus:outline-none focus:border-blue-500"
+        @keydown.enter="applySearch()">
+      <select x-model="filterProject" @change="applyFilters()"
+        class="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-blue-500">
+        <option value="">All Projects</option>
+        <template x-for="p in projects" :key="p.slug">
+          <option :value="p.slug" x-text="p.name"></option>
+        </template>
+      </select>
+      <select x-model="filterDomain" @change="applyFilters()"
+        class="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-blue-500">
+        <option value="">All Domains</option>
+        <template x-for="d in domains" :key="d.name">
+          <option :value="d.name" x-text="d.name"></option>
+        </template>
+      </select>
+      <div class="flex flex-wrap gap-1">
+        <template x-for="nt in nodeTypes" :key="nt">
+          <button @click="toggleNodeType(nt)"
+            class="text-xs px-2 py-1 rounded-full border transition-colors"
+            :class="activeNodeTypes.includes(nt) ? nodeColor(nt).chip : 'border-gray-700 text-gray-500 hover:text-gray-300'"
+            x-text="nt"></button>
+        </template>
+      </div>
+      <select x-model="filterStatus" @change="applyFilters()"
+        class="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-blue-500 ml-auto">
+        <option value="active">Active</option>
+        <option value="">All Status</option>
+        <option value="draft">Draft</option>
+        <option value="archived">Archived</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- Browse View -->
+  <div x-show="currentTab === 'browse'" class="max-w-7xl mx-auto px-4 sm:px-6 py-4">
+    <div class="flex items-center justify-between mb-3">
+      <p class="text-sm text-gray-400">
+        <span x-text="browseNodes.length"></span> nodes
+        <span x-show="browseTotal > browseNodes.length" class="text-gray-500" x-text="' of ' + browseTotal"></span>
+      </p>
+      <select x-model="sortBy" @change="loadBrowse(true)"
+        class="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1 text-xs text-gray-400 focus:outline-none">
+        <option value="updated_at">Recently Updated</option>
+        <option value="confidence">Confidence</option>
+        <option value="access_count">Most Accessed</option>
+        <option value="staleness_days">Stalest First</option>
+      </select>
+    </div>
+
+    <!-- Loading -->
+    <div x-show="browseLoading" class="text-center py-12 text-gray-500 text-sm">Loading...</div>
+
+    <!-- Cards -->
+    <div x-show="!browseLoading" class="space-y-2">
+      <template x-for="node in browseNodes" :key="node.id">
+        <div class="bg-gray-900 border border-gray-800 rounded-lg hover:border-gray-700 transition-colors">
+          <div class="px-4 py-3 cursor-pointer flex items-start gap-3" @click="toggleExpand(node.id)">
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2 mb-1 flex-wrap">
+                <span class="node-badge" :style="'background:' + nodeColor(node.node_type).bg + ';color:' + nodeColor(node.node_type).text" x-text="node.node_type"></span>
+                <h3 class="text-sm font-medium text-gray-100 truncate" x-text="node.title"></h3>
+              </div>
+              <div class="flex items-center gap-3 text-xs text-gray-500">
+                <span x-text="timeAgo(node.updated_at)"></span>
+                <template x-if="node.domains && node.domains.length > 0">
+                  <span class="flex gap-1">
+                    <template x-for="dm in node.domains.slice(0,3)" :key="dm">
+                      <span class="bg-gray-800 px-1.5 py-0.5 rounded text-gray-400" x-text="dm"></span>
+                    </template>
+                  </span>
+                </template>
+                <span x-show="node.staleness_days > 180" class="text-amber-500">stale</span>
+              </div>
+            </div>
+            <div class="flex items-center gap-3 shrink-0">
+              <div class="w-16" :title="'Confidence: ' + (node.confidence * 100).toFixed(0) + '%'">
+                <div class="confidence-bar">
+                  <div class="confidence-fill" :style="'width:' + (node.confidence * 100) + '%;background:' + confColor(node.confidence)"></div>
+                </div>
+              </div>
+              <svg class="w-4 h-4 text-gray-600 transition-transform" :class="expandedId === node.id ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+            </div>
+          </div>
+          <!-- Expanded Content -->
+          <div x-show="expandedId === node.id" x-transition class="card-expand border-t border-gray-800 px-4 py-3">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div class="md:col-span-2 max-h-96 overflow-y-auto scrollbar-thin">
+                <div class="md-content text-sm text-gray-300" x-html="renderMd(node.content)"></div>
+              </div>
+              <div class="space-y-3 text-xs">
+                <div class="bg-gray-800/50 rounded-lg p-3 space-y-2">
+                  <div class="flex justify-between"><span class="text-gray-500">ID</span><span class="text-gray-400 font-mono text-[10px]" x-text="node.id.slice(0,8) + '...'"></span></div>
+                  <div class="flex justify-between"><span class="text-gray-500">Confidence</span><span :class="node.confidence >= 0.9 ? 'text-green-400' : node.confidence >= 0.7 ? 'text-blue-400' : 'text-amber-400'" x-text="(node.confidence * 100).toFixed(0) + '%'"></span></div>
+                  <div class="flex justify-between"><span class="text-gray-500">Status</span><span class="text-gray-300" x-text="node.status"></span></div>
+                  <div class="flex justify-between"><span class="text-gray-500">Access Count</span><span class="text-gray-300" x-text="node.access_count || 0"></span></div>
+                  <div class="flex justify-between"><span class="text-gray-500">Staleness</span><span :class="node.staleness_days > 180 ? 'text-amber-400' : 'text-gray-300'" x-text="node.staleness_days + ' days'"></span></div>
+                  <div class="flex justify-between"><span class="text-gray-500">Created</span><span class="text-gray-300" x-text="fmtDate(node.created_at)"></span></div>
+                  <div class="flex justify-between"><span class="text-gray-500">Updated</span><span class="text-gray-300" x-text="fmtDate(node.updated_at)"></span></div>
+                </div>
+                <!-- Edges -->
+                <div x-show="nodeEdges[node.id]" class="bg-gray-800/50 rounded-lg p-3">
+                  <h4 class="text-gray-400 font-medium mb-2">Connections</h4>
+                  <div class="space-y-1 max-h-40 overflow-y-auto scrollbar-thin">
+                    <template x-for="edge in (nodeEdges[node.id] || [])" :key="edge.id">
+                      <div class="flex items-center gap-2 text-[11px]">
+                        <span class="px-1.5 py-0.5 rounded" :style="'background:' + edgeColor(edge.edge_type) + '22;color:' + edgeColor(edge.edge_type)" x-text="edge.edge_type"></span>
+                        <span class="text-gray-400 truncate cursor-pointer hover:text-gray-200" @click="navigateToNode(edge.linked_id)" x-text="edge.linked_title"></span>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+                <button @click="viewInGraph(node.id)" class="w-full text-center text-blue-400 hover:text-blue-300 bg-gray-800/50 rounded-lg py-2 text-xs transition-colors">
+                  View in Graph
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- Load More -->
+    <div x-show="browseNodes.length < browseTotal && !browseLoading" class="text-center py-4">
+      <button @click="loadMoreBrowse()" class="bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm px-6 py-2 rounded-lg transition-colors">
+        Load More
+      </button>
+    </div>
+  </div>
+
+  <!-- Graph View -->
+  <div x-show="currentTab === 'graph'" class="relative" style="height: calc(100vh - 130px);">
+    <div class="absolute top-3 left-3 z-30 bg-gray-900/90 border border-gray-700 rounded-lg p-3 space-y-2 text-xs max-w-xs">
+      <div class="flex items-center gap-2">
+        <span class="text-gray-400">Limit:</span>
+        <input type="range" x-model="graphLimit" min="50" max="500" step="50" @change="loadGraph()"
+          class="flex-1 accent-blue-500">
+        <span class="text-gray-300 w-8 text-right" x-text="graphLimit"></span>
+      </div>
+      <div x-show="graphData" class="text-gray-500">
+        <span x-text="graphData ? graphData.node_count + ' nodes, ' + graphData.edge_count + ' edges' : ''"></span>
+      </div>
+    </div>
+    <!-- Graph Detail Sidebar -->
+    <div x-show="graphSelected" x-transition
+      class="absolute top-0 right-0 z-30 w-80 h-full bg-gray-900 border-l border-gray-800 overflow-y-auto scrollbar-thin p-4 space-y-3">
+      <div class="flex items-center justify-between">
+        <span class="node-badge" :style="graphSelected ? 'background:' + nodeColor(graphSelected.node_type).bg + ';color:' + nodeColor(graphSelected.node_type).text : ''" x-text="graphSelected?.node_type"></span>
+        <button @click="graphSelected = null" class="text-gray-500 hover:text-gray-300">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+        </button>
+      </div>
+      <h3 class="text-base font-semibold text-white" x-text="graphSelected?.title"></h3>
+      <div class="text-xs text-gray-500 flex gap-3">
+        <span x-text="'Confidence: ' + ((graphSelected?.confidence || 0) * 100).toFixed(0) + '%'"></span>
+        <span x-text="'Access: ' + (graphSelected?.access_count || 0)"></span>
+      </div>
+      <template x-if="graphSelected?.domains?.length > 0">
+        <div class="flex gap-1 flex-wrap">
+          <template x-for="dm in graphSelected.domains" :key="dm">
+            <span class="bg-gray-800 px-1.5 py-0.5 rounded text-xs text-gray-400" x-text="dm"></span>
+          </template>
+        </div>
+      </template>
+      <div x-show="graphSelectedEdges.length > 0" class="space-y-1">
+        <h4 class="text-xs text-gray-400 font-medium">Connections</h4>
+        <template x-for="e in graphSelectedEdges" :key="e.id">
+          <div class="flex items-center gap-2 text-[11px]">
+            <span class="px-1.5 py-0.5 rounded" :style="'background:' + edgeColor(e.edge_type) + '22;color:' + edgeColor(e.edge_type)" x-text="e.edge_type"></span>
+            <span class="text-gray-400 truncate" x-text="e.linked_title"></span>
+          </div>
+        </template>
+      </div>
+    </div>
+    <div x-show="graphLoading" class="absolute inset-0 flex items-center justify-center z-20">
+      <span class="text-gray-500 text-sm">Loading graph...</span>
+    </div>
+    <div id="graph-container" class="w-full h-full"></div>
+    <div id="graph-tooltip" class="graph-tooltip hidden"></div>
+  </div>
+
+  <!-- Wiki View -->
+  <div x-show="currentTab === 'wiki'" class="max-w-7xl mx-auto px-4 sm:px-6 py-4">
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <!-- Project Sidebar -->
+      <div class="md:col-span-1 space-y-1">
+        <h3 class="text-sm font-medium text-gray-400 mb-2">Projects</h3>
+        <template x-for="p in wikiProjects" :key="p.slug">
+          <button @click="selectWikiProject(p.slug)"
+            class="w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex justify-between items-center"
+            :class="wikiProject === p.slug ? 'bg-blue-600/20 text-blue-400 border border-blue-600/30' : 'text-gray-400 hover:bg-gray-800/60'">
+            <span x-text="p.name"></span>
+            <span class="text-xs text-gray-600" x-text="p.node_count || ''"></span>
+          </button>
+        </template>
+        <div x-show="wikiProjects.length === 0" class="text-xs text-gray-600 py-4 text-center">
+          No projects yet.<br>Use <code class="text-gray-500">/brain:wiki.init</code>
+        </div>
+      </div>
+      <!-- Wiki Content -->
+      <div class="md:col-span-3">
+        <div x-show="!wikiProject" class="text-center py-12 text-gray-600 text-sm">
+          Select a project from the sidebar
+        </div>
+        <div x-show="wikiProject">
+          <!-- Wiki Index -->
+          <div x-show="wikiIndex" class="bg-gray-900 border border-gray-800 rounded-lg p-5 mb-4">
+            <h2 class="text-lg font-semibold text-white mb-3" x-text="wikiIndex?.title || 'Wiki Index'"></h2>
+            <div class="md-content text-sm text-gray-300" x-html="renderMd(wikiIndex?.content || '')"></div>
+          </div>
+          <div x-show="!wikiIndex && wikiProject" class="bg-gray-900 border border-gray-800 rounded-lg p-5 mb-4 text-center text-gray-500 text-sm">
+            No wiki index found for this project.<br>Initialize with <code class="text-gray-400">/brain:wiki.init</code>
+          </div>
+          <!-- Activity Log -->
+          <div x-show="wikiActivity.length > 0">
+            <h3 class="text-sm font-medium text-gray-400 mb-2">Activity Log</h3>
+            <div class="space-y-2">
+              <template x-for="log in wikiActivity" :key="log.id">
+                <div class="bg-gray-900/60 border border-gray-800 rounded-lg px-4 py-3">
+                  <div class="flex items-center justify-between mb-1">
+                    <span class="text-sm font-medium text-gray-200" x-text="log.title"></span>
+                    <span class="text-xs text-gray-500" x-text="timeAgo(log.updated_at)"></span>
+                  </div>
+                  <div class="md-content text-xs text-gray-400" x-html="renderMd(log.content.slice(0, 500))"></div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Health View -->
+  <div x-show="currentTab === 'health'" class="max-w-7xl mx-auto px-4 sm:px-6 py-4">
+    <div x-show="healthLoading" class="text-center py-12 text-gray-500 text-sm">Loading health data...</div>
+    <div x-show="!healthLoading && healthData">
+      <!-- Stats Cards -->
+      <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
+        <div class="stat-card rounded-lg p-4 border border-gray-800">
+          <p class="text-2xl font-bold text-white" x-text="healthData?.total_nodes || 0"></p>
+          <p class="text-xs text-gray-500 mt-1">Total Nodes</p>
+        </div>
+        <div class="stat-card rounded-lg p-4 border border-gray-800">
+          <p class="text-2xl font-bold" :class="(healthData?.embedding_coverage_pct || 0) > 50 ? 'text-green-400' : 'text-amber-400'" x-text="(healthData?.embedding_coverage_pct || 0) + '%'"></p>
+          <p class="text-xs text-gray-500 mt-1">Embedding Coverage</p>
+        </div>
+        <div class="stat-card rounded-lg p-4 border border-gray-800">
+          <p class="text-2xl font-bold text-blue-400" x-text="((healthData?.avg_confidence || 0) * 100).toFixed(0) + '%'"></p>
+          <p class="text-xs text-gray-500 mt-1">Avg Confidence</p>
+        </div>
+        <div class="stat-card rounded-lg p-4 border border-gray-800">
+          <p class="text-2xl font-bold" :class="(healthData?.stale_count || 0) > 100 ? 'text-red-400' : 'text-amber-400'" x-text="healthData?.stale_count || 0"></p>
+          <p class="text-xs text-gray-500 mt-1">Stale (>90d)</p>
+        </div>
+        <div class="stat-card rounded-lg p-4 border border-gray-800">
+          <p class="text-2xl font-bold text-purple-400" x-text="healthData?.growth_30d || 0"></p>
+          <p class="text-xs text-gray-500 mt-1">Growth (30d)</p>
+        </div>
+        <div class="stat-card rounded-lg p-4 border border-gray-800">
+          <p class="text-2xl font-bold text-teal-400" x-text="totalEdges"></p>
+          <p class="text-xs text-gray-500 mt-1">Total Edges</p>
+        </div>
+      </div>
+
+      <!-- Node Type Distribution -->
+      <div class="bg-gray-900 border border-gray-800 rounded-lg p-5 mb-4">
+        <h3 class="text-sm font-medium text-gray-300 mb-3">Node Type Distribution</h3>
+        <div class="space-y-2">
+          <template x-for="[type, count] in sortedTypes" :key="type">
+            <div class="flex items-center gap-3">
+              <span class="text-xs text-gray-400 w-28 text-right" x-text="type"></span>
+              <div class="flex-1 h-5 bg-gray-800 rounded overflow-hidden">
+                <div class="bar-segment h-full rounded" :style="'width:' + (count / maxTypeCount * 100) + '%;background:' + nodeColor(type).bg"></div>
+              </div>
+              <span class="text-xs text-gray-500 w-12 text-right" x-text="count"></span>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- Domain Breakdown -->
+      <div class="bg-gray-900 border border-gray-800 rounded-lg p-5 mb-4" x-show="healthData?.by_domain?.length > 0">
+        <h3 class="text-sm font-medium text-gray-300 mb-3">Domain Breakdown</h3>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-xs text-gray-500 border-b border-gray-800">
+                <th class="text-left py-2 px-2">Domain</th>
+                <th class="text-right py-2 px-2">Nodes</th>
+                <th class="text-right py-2 px-2">Avg Confidence</th>
+                <th class="text-right py-2 px-2">Stale</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="dm in healthData.by_domain" :key="dm.name">
+                <tr class="border-b border-gray-800/50 hover:bg-gray-800/30">
+                  <td class="py-2 px-2 text-gray-300" x-text="dm.name"></td>
+                  <td class="text-right py-2 px-2 text-gray-400" x-text="dm.count"></td>
+                  <td class="text-right py-2 px-2" :class="dm.avg_confidence >= 0.8 ? 'text-green-400' : 'text-amber-400'" x-text="(dm.avg_confidence * 100).toFixed(0) + '%'"></td>
+                  <td class="text-right py-2 px-2" :class="dm.stale_count > 10 ? 'text-red-400' : 'text-gray-400'" x-text="dm.stale_count"></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Stale Nodes -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
+          <h3 class="text-sm font-medium text-amber-400 mb-3">Stale Nodes (>180 days)</h3>
+          <div x-show="staleNodes.length === 0" class="text-xs text-gray-600">None found</div>
+          <div class="space-y-1 max-h-64 overflow-y-auto scrollbar-thin">
+            <template x-for="n in staleNodes" :key="n.id">
+              <div class="flex items-center justify-between text-xs py-1">
+                <span class="text-gray-400 truncate flex-1 cursor-pointer hover:text-gray-200" @click="navigateToNode(n.id)" x-text="n.title"></span>
+                <span class="text-amber-500 ml-2 shrink-0" x-text="n.staleness_days + 'd'"></span>
+              </div>
+            </template>
+          </div>
+        </div>
+        <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
+          <h3 class="text-sm font-medium text-red-400 mb-3">Low Confidence (<60%)</h3>
+          <div x-show="lowConfNodes.length === 0" class="text-xs text-gray-600">None found</div>
+          <div class="space-y-1 max-h-64 overflow-y-auto scrollbar-thin">
+            <template x-for="n in lowConfNodes" :key="n.id">
+              <div class="flex items-center justify-between text-xs py-1">
+                <span class="text-gray-400 truncate flex-1 cursor-pointer hover:text-gray-200" @click="navigateToNode(n.id)" x-text="n.title"></span>
+                <span class="text-red-400 ml-2 shrink-0" x-text="(n.confidence * 100).toFixed(0) + '%'"></span>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+const SUPABASE_URL = 'https://mxeeqcsnbcwnyresenne.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im14ZWVxY3NuYmN3bnlyZXNlbm5lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEyMTI5NzIsImV4cCI6MjA4Njc4ODk3Mn0.uF22_nlwQMMtN2uzKhnxiGQV_XG4zqPiqS30nXqo8B8';
+
+function explorer() {
+  return {
+    sb: null,
+    currentTab: 'browse',
+    totalNodes: 0,
+    totalEdges: 0,
+
+    // Filters (shared)
+    searchQuery: '',
+    filterProject: '',
+    filterDomain: '',
+    filterStatus: 'active',
+    activeNodeTypes: [],
+    projects: [],
+    domains: [],
+    nodeTypes: ['note','pattern','decision','reference','person','organization','task','research_claim','playbook','wiki_index'],
+
+    // Browse
+    browseNodes: [],
+    browseTotal: 0,
+    browseLoading: false,
+    browseOffset: 0,
+    sortBy: 'updated_at',
+    expandedId: null,
+    nodeEdges: {},
+
+    // Graph
+    graphLimit: 200,
+    graphData: null,
+    graphLoading: false,
+    graphSelected: null,
+    graphSelectedEdges: [],
+    simulation: null,
+
+    // Wiki
+    wikiProjects: [],
+    wikiProject: null,
+    wikiIndex: null,
+    wikiActivity: [],
+
+    // Health
+    healthData: null,
+    healthLoading: false,
+    staleNodes: [],
+    lowConfNodes: [],
+    sortedTypes: [],
+    maxTypeCount: 1,
+
+    async init() {
+      this.sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+      // Handle hash routing
+      this.handleHash();
+      window.addEventListener('hashchange', () => this.handleHash());
+
+      // Load reference data
+      await Promise.all([this.loadProjects(), this.loadDomains(), this.loadCounts()]);
+      this.loadCurrentTab();
+    },
+
+    handleHash() {
+      const hash = window.location.hash.replace('#', '');
+      if (hash.startsWith('node/')) {
+        this.currentTab = 'browse';
+        const nodeId = hash.replace('node/', '');
+        this.$nextTick(() => this.navigateToNode(nodeId));
+      } else if (['browse','graph','wiki','health'].includes(hash)) {
+        this.currentTab = hash;
+      }
+    },
+
+    switchTab(tab) {
+      this.currentTab = tab;
+      window.location.hash = tab;
+      this.loadCurrentTab();
+    },
+
+    loadCurrentTab() {
+      if (this.currentTab === 'browse') this.loadBrowse(true);
+      else if (this.currentTab === 'graph') this.loadGraph();
+      else if (this.currentTab === 'wiki') this.loadWiki();
+      else if (this.currentTab === 'health') this.loadHealth();
+    },
+
+    async loadProjects() {
+      const { data } = await this.sb.from('brain_project').select('name, slug, status').eq('status', 'active').order('name');
+      this.projects = data || [];
+    },
+
+    async loadDomains() {
+      const { data } = await this.sb.from('brain_domain').select('name, description').order('name');
+      this.domains = data || [];
+    },
+
+    async loadCounts() {
+      const { count: nc } = await this.sb.from('brain_node').select('id', { count: 'exact', head: true }).eq('status', 'active');
+      const { count: ec } = await this.sb.from('brain_edge').select('id', { count: 'exact', head: true });
+      this.totalNodes = nc || 0;
+      this.totalEdges = ec || 0;
+    },
+
+    applyFilters() {
+      this.loadCurrentTab();
+    },
+
+    applySearch() {
+      this.loadCurrentTab();
+    },
+
+    toggleNodeType(nt) {
+      const idx = this.activeNodeTypes.indexOf(nt);
+      if (idx >= 0) this.activeNodeTypes.splice(idx, 1);
+      else this.activeNodeTypes.push(nt);
+      this.loadCurrentTab();
+    },
+
+    // ============ BROWSE ============
+
+    async loadBrowse(reset = false) {
+      if (reset) { this.browseOffset = 0; this.browseNodes = []; }
+      this.browseLoading = true;
+
+      try {
+        // If there's a text search, use keyword search via PostgREST full-text
+        let query = this.sb.from('brain_node')
+          .select('id, title, content, node_type, status, confidence, staleness_days, access_count, created_at, updated_at, created_by, metadata', { count: 'exact' });
+
+        if (this.filterStatus) query = query.eq('status', this.filterStatus);
+        if (this.activeNodeTypes.length > 0) query = query.in('node_type', this.activeNodeTypes);
+        if (this.searchQuery) query = query.or('title.ilike.%' + this.searchQuery + '%,content.ilike.%' + this.searchQuery + '%');
+
+        // Sort
+        const descSort = ['updated_at','confidence','access_count','staleness_days'].includes(this.sortBy);
+        query = query.order(this.sortBy, { ascending: !descSort });
+        query = query.range(this.browseOffset, this.browseOffset + 24);
+
+        const { data, count, error } = await query;
+        if (error) { console.error('Browse error:', error); this.browseLoading = false; return; }
+
+        // Enrich with domains
+        if (data && data.length > 0) {
+          const ids = data.map(n => n.id);
+          const { data: ndData } = await this.sb
+            .from('brain_node_domain')
+            .select('node_id, domain:brain_domain(name)')
+            .in('node_id', ids);
+
+          const domMap = {};
+          (ndData || []).forEach(r => {
+            if (!domMap[r.node_id]) domMap[r.node_id] = [];
+            domMap[r.node_id].push(r.domain?.name || '');
+          });
+          data.forEach(n => n.domains = domMap[n.id] || []);
+        }
+
+        if (reset) this.browseNodes = data || [];
+        else this.browseNodes = [...this.browseNodes, ...(data || [])];
+        this.browseTotal = count || 0;
+      } catch (e) { console.error(e); }
+      this.browseLoading = false;
+    },
+
+    loadMoreBrowse() {
+      this.browseOffset += 25;
+      this.loadBrowse(false);
+    },
+
+    async toggleExpand(id) {
+      if (this.expandedId === id) { this.expandedId = null; return; }
+      this.expandedId = id;
+      if (!this.nodeEdges[id]) await this.loadNodeEdges(id);
+    },
+
+    async loadNodeEdges(nodeId) {
+      const { data: outEdges } = await this.sb
+        .from('brain_edge')
+        .select('id, edge_type, strength, to_node_id, to_node:brain_node!brain_edge_to_node_id_fkey(id, title)')
+        .eq('from_node_id', nodeId)
+        .limit(50);
+
+      const { data: inEdges } = await this.sb
+        .from('brain_edge')
+        .select('id, edge_type, strength, from_node_id, from_node:brain_node!brain_edge_from_node_id_fkey(id, title)')
+        .eq('to_node_id', nodeId)
+        .limit(50);
+
+      const edges = [];
+      (outEdges || []).forEach(e => edges.push({
+        id: e.id, edge_type: e.edge_type, strength: e.strength,
+        linked_id: e.to_node_id, linked_title: e.to_node?.title || 'Unknown'
+      }));
+      (inEdges || []).forEach(e => edges.push({
+        id: e.id, edge_type: e.edge_type, strength: e.strength,
+        linked_id: e.from_node_id, linked_title: e.from_node?.title || 'Unknown'
+      }));
+      this.nodeEdges[nodeId] = edges;
+    },
+
+    async navigateToNode(id) {
+      this.currentTab = 'browse';
+      window.location.hash = 'node/' + id;
+      // Load that specific node if not in list
+      const existing = this.browseNodes.find(n => n.id === id);
+      if (existing) {
+        this.expandedId = id;
+        if (!this.nodeEdges[id]) await this.loadNodeEdges(id);
+      } else {
+        const { data } = await this.sb.from('brain_node')
+          .select('id, title, content, node_type, status, confidence, staleness_days, access_count, created_at, updated_at, metadata')
+          .eq('id', id).single();
+        if (data) {
+          data.domains = [];
+          this.browseNodes = [data, ...this.browseNodes];
+          this.expandedId = id;
+          await this.loadNodeEdges(id);
+        }
+      }
+    },
+
+    // ============ GRAPH ============
+
+    async loadGraph() {
+      this.graphLoading = true;
+      this.graphSelected = null;
+      try {
+        const params = { p_limit: parseInt(this.graphLimit) };
+        if (this.filterProject) params.p_project_slug = this.filterProject;
+        if (this.filterDomain) params.p_domain_slug = this.filterDomain;
+        if (this.activeNodeTypes.length > 0) params.p_node_types = this.activeNodeTypes;
+
+        const { data, error } = await this.sb.rpc('brain_graph_data', params);
+        if (error) { console.error('Graph RPC error:', error); this.graphLoading = false; return; }
+        this.graphData = data;
+        this.$nextTick(() => this.renderGraph());
+      } catch (e) { console.error(e); }
+      this.graphLoading = false;
+    },
+
+    renderGraph() {
+      const container = document.getElementById('graph-container');
+      if (!container || !this.graphData) return;
+
+      // Clear previous
+      d3.select(container).selectAll('*').remove();
+      if (this.simulation) this.simulation.stop();
+
+      const width = container.clientWidth;
+      const height = container.clientHeight;
+      const nodes = this.graphData.nodes.map(n => ({...n}));
+      const edges = this.graphData.edges.map(e => ({...e}));
+
+      if (nodes.length === 0) {
+        d3.select(container).append('div')
+          .style('display', 'flex').style('align-items', 'center').style('justify-content', 'center')
+          .style('height', '100%').style('color', '#6b7280').style('font-size', '14px')
+          .text('No nodes match current filters');
+        return;
+      }
+
+      const svg = d3.select(container)
+        .append('svg')
+        .attr('width', width)
+        .attr('height', height)
+        .style('background', '#030712');
+
+      const g = svg.append('g');
+
+      // Zoom
+      const zoom = d3.zoom()
+        .scaleExtent([0.1, 4])
+        .on('zoom', (event) => g.attr('transform', event.transform));
+      svg.call(zoom);
+
+      // Build node lookup
+      const nodeMap = {};
+      nodes.forEach(n => nodeMap[n.id] = n);
+
+      // Resolve source/target to node objects
+      const validEdges = edges.filter(e => nodeMap[e.source] && nodeMap[e.target]);
+      validEdges.forEach(e => { e.source = nodeMap[e.source]; e.target = nodeMap[e.target]; });
+
+      // Node radius by access_count
+      const maxAccess = Math.max(...nodes.map(n => n.access_count || 0), 1);
+      const radiusScale = d3.scaleSqrt().domain([0, maxAccess]).range([6, 22]);
+
+      const self = this;
+      const edgeColorMap = {
+        supports: '#22c55e', contradicts: '#ef4444', extends: '#3b82f6',
+        supersedes: '#f97316', depends_on: '#a855f7', derived_from: '#6b7280',
+        related_to: '#4b5563', applied_in: '#14b8a6', exemplifies: '#ec4899'
+      };
+
+      // Edges
+      const link = g.append('g')
+        .selectAll('line')
+        .data(validEdges)
+        .join('line')
+        .attr('stroke', d => edgeColorMap[d.edge_type] || '#374151')
+        .attr('stroke-width', d => Math.max(0.5, (d.strength || 0.5) * 2))
+        .attr('stroke-opacity', 0.4);
+
+      // Nodes
+      const node = g.append('g')
+        .selectAll('circle')
+        .data(nodes)
+        .join('circle')
+        .attr('r', d => radiusScale(d.access_count || 0))
+        .attr('fill', d => self.nodeColor(d.node_type).bg)
+        .attr('stroke', '#111827')
+        .attr('stroke-width', 1)
+        .style('cursor', 'pointer')
+        .on('click', (event, d) => {
+          event.stopPropagation();
+          self.graphSelected = d;
+          // Find edges for this node
+          self.graphSelectedEdges = validEdges
+            .filter(e => e.source.id === d.id || e.target.id === d.id)
+            .map(e => ({
+              id: e.id, edge_type: e.edge_type,
+              linked_id: e.source.id === d.id ? e.target.id : e.source.id,
+              linked_title: e.source.id === d.id ? e.target.title : e.source.title
+            }));
+        });
+
+      // Tooltip
+      const tooltip = document.getElementById('graph-tooltip');
+      node.on('mouseover', (event, d) => {
+        tooltip.textContent = d.title;
+        tooltip.classList.remove('hidden');
+      }).on('mousemove', (event) => {
+        tooltip.style.left = (event.pageX + 12) + 'px';
+        tooltip.style.top = (event.pageY - 8) + 'px';
+      }).on('mouseout', () => {
+        tooltip.classList.add('hidden');
+      });
+
+      // Labels for larger nodes
+      const labels = g.append('g')
+        .selectAll('text')
+        .data(nodes.filter(n => (n.access_count || 0) >= maxAccess * 0.3 || nodes.length < 30))
+        .join('text')
+        .text(d => d.title.length > 24 ? d.title.slice(0, 22) + '...' : d.title)
+        .attr('font-size', '9px')
+        .attr('fill', '#9ca3af')
+        .attr('dx', d => radiusScale(d.access_count || 0) + 4)
+        .attr('dy', 3);
+
+      // Drag
+      const drag = d3.drag()
+        .on('start', (event, d) => {
+          if (!event.active) self.simulation.alphaTarget(0.3).restart();
+          d.fx = d.x; d.fy = d.y;
+        })
+        .on('drag', (event, d) => { d.fx = event.x; d.fy = event.y; })
+        .on('end', (event, d) => {
+          if (!event.active) self.simulation.alphaTarget(0);
+          d.fx = null; d.fy = null;
+        });
+      node.call(drag);
+
+      // Simulation
+      this.simulation = d3.forceSimulation(nodes)
+        .force('link', d3.forceLink(validEdges).id(d => d.id).distance(80))
+        .force('charge', d3.forceManyBody().strength(-120))
+        .force('center', d3.forceCenter(width / 2, height / 2))
+        .force('collision', d3.forceCollide().radius(d => radiusScale(d.access_count || 0) + 2))
+        .on('tick', () => {
+          link.attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+              .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+          node.attr('cx', d => d.x).attr('cy', d => d.y);
+          labels.attr('x', d => d.x).attr('y', d => d.y);
+        });
+
+      // Click empty space to deselect
+      svg.on('click', () => { self.graphSelected = null; });
+
+      // Initial zoom to fit
+      const padding = 40;
+      setTimeout(() => {
+        const bounds = g.node().getBBox();
+        if (bounds.width > 0 && bounds.height > 0) {
+          const scale = Math.min(
+            (width - padding * 2) / bounds.width,
+            (height - padding * 2) / bounds.height,
+            1.5
+          );
+          const tx = width / 2 - (bounds.x + bounds.width / 2) * scale;
+          const ty = height / 2 - (bounds.y + bounds.height / 2) * scale;
+          svg.transition().duration(500)
+            .call(zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
+        }
+      }, 1500);
+    },
+
+    viewInGraph(nodeId) {
+      this.switchTab('graph');
+    },
+
+    // ============ WIKI ============
+
+    async loadWiki() {
+      // Load projects with node counts
+      const { data: prjs } = await this.sb.from('brain_project').select('name, slug, status').eq('status', 'active').order('name');
+      // Get node counts per project
+      const projList = prjs || [];
+      if (projList.length > 0) {
+        const { data: counts } = await this.sb
+          .from('brain_node_project')
+          .select('project_id, brain_project(slug)')
+        // Can't easily get counts per project via PostgREST, so we just show the projects
+      }
+      this.wikiProjects = projList.map(p => ({ ...p, node_count: null }));
+    },
+
+    async selectWikiProject(slug) {
+      this.wikiProject = slug;
+      this.wikiIndex = null;
+      this.wikiActivity = [];
+
+      // Find wiki_index for this project
+      const { data: indexNodes } = await this.sb
+        .from('brain_node')
+        .select('id, title, content, node_type, updated_at, metadata')
+        .eq('node_type', 'wiki_index')
+        .eq('status', 'active')
+        .order('updated_at', { ascending: false });
+
+      // Filter by project slug in metadata
+      const idx = (indexNodes || []).find(n => n.metadata?.project_slug === slug);
+      this.wikiIndex = idx || null;
+
+      // Find activity_log nodes for project
+      const { data: actNodes } = await this.sb
+        .from('brain_node')
+        .select('id, title, content, node_type, updated_at, metadata')
+        .eq('node_type', 'activity_log')
+        .eq('status', 'active')
+        .order('updated_at', { ascending: false })
+        .limit(20);
+
+      this.wikiActivity = (actNodes || []).filter(n => n.metadata?.project_slug === slug);
+    },
+
+    // ============ HEALTH ============
+
+    async loadHealth() {
+      this.healthLoading = true;
+      try {
+        const params = {};
+        if (this.filterDomain) params.p_domain_slug = this.filterDomain;
+
+        const { data, error } = await this.sb.rpc('brain_stats', params);
+        if (error) { console.error('Stats RPC error:', error); this.healthLoading = false; return; }
+        this.healthData = data;
+
+        // Sort types for bar chart
+        const byType = data.by_type || {};
+        this.sortedTypes = Object.entries(byType).sort((a, b) => b[1] - a[1]);
+        this.maxTypeCount = this.sortedTypes.length > 0 ? this.sortedTypes[0][1] : 1;
+
+        // Load stale nodes
+        const { data: stale } = await this.sb
+          .from('brain_node')
+          .select('id, title, staleness_days')
+          .eq('status', 'active')
+          .gt('staleness_days', 180)
+          .order('staleness_days', { ascending: false })
+          .limit(30);
+        this.staleNodes = stale || [];
+
+        // Load low confidence nodes
+        const { data: lowConf } = await this.sb
+          .from('brain_node')
+          .select('id, title, confidence')
+          .eq('status', 'active')
+          .lt('confidence', 0.6)
+          .order('confidence', { ascending: true })
+          .limit(30);
+        this.lowConfNodes = lowConf || [];
+
+      } catch (e) { console.error(e); }
+      this.healthLoading = false;
+    },
+
+    // ============ HELPERS ============
+
+    nodeColor(type) {
+      const map = {
+        note:           { bg: '#3b82f6', text: '#dbeafe', chip: 'border-blue-500 text-blue-400 bg-blue-500/10' },
+        pattern:        { bg: '#22c55e', text: '#dcfce7', chip: 'border-green-500 text-green-400 bg-green-500/10' },
+        decision:       { bg: '#f97316', text: '#fff7ed', chip: 'border-orange-500 text-orange-400 bg-orange-500/10' },
+        reference:      { bg: '#6b7280', text: '#f3f4f6', chip: 'border-gray-500 text-gray-400 bg-gray-500/10' },
+        person:         { bg: '#a855f7', text: '#faf5ff', chip: 'border-purple-500 text-purple-400 bg-purple-500/10' },
+        organization:   { bg: '#14b8a6', text: '#f0fdfa', chip: 'border-teal-500 text-teal-400 bg-teal-500/10' },
+        task:           { bg: '#eab308', text: '#fefce8', chip: 'border-yellow-500 text-yellow-400 bg-yellow-500/10' },
+        research_claim: { bg: '#ef4444', text: '#fef2f2', chip: 'border-red-500 text-red-400 bg-red-500/10' },
+        wiki_index:     { bg: '#6366f1', text: '#eef2ff', chip: 'border-indigo-500 text-indigo-400 bg-indigo-500/10' },
+        playbook:       { bg: '#ec4899', text: '#fdf2f8', chip: 'border-pink-500 text-pink-400 bg-pink-500/10' },
+        principle:      { bg: '#06b6d4', text: '#ecfeff', chip: 'border-cyan-500 text-cyan-400 bg-cyan-500/10' },
+        research_source:{ bg: '#f43f5e', text: '#fff1f2', chip: 'border-rose-500 text-rose-400 bg-rose-500/10' },
+        hub:            { bg: '#8b5cf6', text: '#f5f3ff', chip: 'border-violet-500 text-violet-400 bg-violet-500/10' },
+        log:            { bg: '#78716c', text: '#fafaf9', chip: 'border-stone-500 text-stone-400 bg-stone-500/10' },
+        interaction_event: { bg: '#0ea5e9', text: '#f0f9ff', chip: 'border-sky-500 text-sky-400 bg-sky-500/10' },
+        activity_log:   { bg: '#84cc16', text: '#f7fee7', chip: 'border-lime-500 text-lime-400 bg-lime-500/10' },
+      };
+      return map[type] || { bg: '#4b5563', text: '#f9fafb', chip: 'border-gray-500 text-gray-400 bg-gray-500/10' };
+    },
+
+    edgeColor(type) {
+      const map = {
+        supports: '#22c55e', contradicts: '#ef4444', extends: '#3b82f6',
+        supersedes: '#f97316', depends_on: '#a855f7', derived_from: '#6b7280',
+        related_to: '#9ca3af', applied_in: '#14b8a6', exemplifies: '#ec4899'
+      };
+      return map[type] || '#4b5563';
+    },
+
+    confColor(c) {
+      if (c >= 0.9) return '#22c55e';
+      if (c >= 0.7) return '#3b82f6';
+      if (c >= 0.5) return '#eab308';
+      return '#ef4444';
+    },
+
+    renderMd(text) {
+      if (!text) return '';
+      try { return marked.parse(text); } catch { return text; }
+    },
+
+    timeAgo(dateStr) {
+      if (!dateStr) return '';
+      const d = new Date(dateStr);
+      const now = new Date();
+      const diff = Math.floor((now - d) / 1000);
+      if (diff < 60) return 'just now';
+      if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+      if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+      if (diff < 2592000) return Math.floor(diff / 86400) + 'd ago';
+      return Math.floor(diff / 2592000) + 'mo ago';
+    },
+
+    fmtDate(dateStr) {
+      if (!dateStr) return '';
+      return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+  };
+}
+</script>
+</body>
+</html>
