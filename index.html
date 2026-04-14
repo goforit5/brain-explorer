@@ -45,8 +45,52 @@
 </head>
 <body class="bg-gray-950 text-gray-200 min-h-screen" x-data="explorer()" x-init="init()" x-cloak>
 
+  <!-- Auth Loading Spinner -->
+  <div x-show="authLoading" class="fixed inset-0 z-[100] bg-gray-950 flex flex-col items-center justify-center">
+    <div class="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center mb-4">
+      <svg class="w-6 h-6 text-white animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path></svg>
+    </div>
+    <p class="text-gray-500 text-sm">Loading...</p>
+  </div>
+
+  <!-- Login Screen -->
+  <div x-show="!authenticated && !authLoading" x-transition class="fixed inset-0 z-[90] bg-gray-950 flex items-center justify-center px-4">
+    <div class="w-full max-w-sm">
+      <!-- Logo & Title -->
+      <div class="text-center mb-8">
+        <div class="w-14 h-14 rounded-2xl bg-blue-600 flex items-center justify-center mx-auto mb-4">
+          <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path></svg>
+        </div>
+        <h1 class="text-2xl font-bold text-white">Brain Explorer</h1>
+        <p class="text-sm text-gray-500 mt-1">AEOS Knowledge Graph</p>
+      </div>
+
+      <!-- Magic Link Form -->
+      <form @submit.prevent="sendMagicLink()" class="space-y-4">
+        <div>
+          <label class="block text-xs font-medium text-gray-400 mb-1.5">Email</label>
+          <input type="email" x-model="authEmail" required autocomplete="email"
+            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3.5 py-2.5 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 transition-colors"
+            placeholder="you@example.com">
+        </div>
+        <div x-show="authError" class="bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+          <p class="text-xs text-red-400" x-text="authError"></p>
+        </div>
+        <div x-show="authSuccess" class="bg-green-500/10 border border-green-500/20 rounded-lg px-3 py-2">
+          <p class="text-xs text-green-400" x-text="authSuccess"></p>
+        </div>
+        <button type="submit" :disabled="authSubmitting"
+          class="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-blue-600/50 disabled:cursor-not-allowed text-white font-medium text-sm rounded-lg py-2.5 transition-colors">
+          <span x-show="!authSubmitting">Send Magic Link</span>
+          <span x-show="authSubmitting">Sending...</span>
+        </button>
+        <p class="text-center text-xs text-gray-500 mt-3">A sign-in link will be sent to your email.</p>
+      </form>
+    </div>
+  </div>
+
   <!-- Header -->
-  <header class="bg-gray-900 border-b border-gray-800 sticky top-0 z-50">
+  <header x-show="authenticated" class="bg-gray-900 border-b border-gray-800 sticky top-0 z-50">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
       <div class="flex items-center gap-3">
         <div class="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center">
@@ -57,10 +101,15 @@
           <p class="text-xs text-gray-500">AEOS Knowledge Graph</p>
         </div>
       </div>
-      <div class="flex items-center gap-2 text-xs text-gray-500">
-        <span x-text="totalNodes + ' nodes'"></span>
-        <span class="text-gray-700">|</span>
-        <span x-text="totalEdges + ' edges'"></span>
+      <div class="flex items-center gap-3">
+        <div class="flex items-center gap-2 text-xs text-gray-500">
+          <span x-text="totalNodes + ' nodes'"></span>
+          <span class="text-gray-700">|</span>
+          <span x-text="totalEdges + ' edges'"></span>
+        </div>
+        <button @click="signOut()" class="text-xs text-gray-500 hover:text-gray-300 bg-gray-800 hover:bg-gray-700 px-3 py-1.5 rounded-lg transition-colors">
+          Sign Out
+        </button>
       </div>
     </div>
     <!-- Tabs -->
@@ -73,7 +122,7 @@
   </header>
 
   <!-- Filter Bar (shared across views) -->
-  <div class="bg-gray-900/60 border-b border-gray-800 sticky top-[89px] z-40">
+  <div x-show="authenticated" class="bg-gray-900/60 border-b border-gray-800 sticky top-[89px] z-40">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 py-2 flex flex-wrap items-center gap-2">
       <input type="text" x-model.debounce.300ms="searchQuery" placeholder="Search nodes..."
         class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-200 placeholder-gray-500 w-48 sm:w-64 focus:outline-none focus:border-blue-500"
@@ -110,6 +159,7 @@
     </div>
   </div>
 
+  <div x-show="authenticated">
   <!-- Browse View -->
   <div x-show="currentTab === 'browse'" class="max-w-7xl mx-auto px-4 sm:px-6 py-4">
     <div class="flex items-center justify-between mb-3">
@@ -421,6 +471,12 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 function explorer() {
   return {
     sb: null,
+    authenticated: false,
+    authLoading: true,
+    authSubmitting: false,
+    authEmail: '',
+    authError: '',
+    authSuccess: '',
     currentTab: 'browse',
     totalNodes: 0,
     totalEdges: 0,
@@ -469,13 +525,49 @@ function explorer() {
     async init() {
       this.sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-      // Handle hash routing
+      // Listen for auth state changes (handles magic link callback)
+      this.sb.auth.onAuthStateChange((event, session) => {
+        if (event === 'SIGNED_IN' && session) {
+          this.authenticated = true;
+          this.authLoading = false;
+          this.loadApp();
+        } else if (event === 'SIGNED_OUT') {
+          this.authenticated = false;
+        }
+      });
+
+      // Check existing session
+      const { data: { session } } = await this.sb.auth.getSession();
+      if (session) {
+        this.authenticated = true;
+        this.loadApp();
+      }
+      this.authLoading = false;
+    },
+
+    async loadApp() {
       this.handleHash();
       window.addEventListener('hashchange', () => this.handleHash());
-
-      // Load reference data
       await Promise.all([this.loadProjects(), this.loadDomains(), this.loadCounts()]);
       this.loadCurrentTab();
+    },
+
+    async sendMagicLink() {
+      this.authError = '';
+      this.authSuccess = '';
+      this.authSubmitting = true;
+      const { error } = await this.sb.auth.signInWithOtp({
+        email: this.authEmail,
+        options: { emailRedirectTo: window.location.origin + window.location.pathname }
+      });
+      this.authSubmitting = false;
+      if (error) { this.authError = error.message; return; }
+      this.authSuccess = 'Check your email for the sign-in link.';
+    },
+
+    async signOut() {
+      await this.sb.auth.signOut();
+      this.authenticated = false;
     },
 
     handleHash() {
@@ -966,5 +1058,6 @@ function explorer() {
   };
 }
 </script>
+</div><!-- end authenticated wrapper -->
 </body>
 </html>
