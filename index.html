@@ -542,6 +542,14 @@ function explorer() {
     async init() {
       this.sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+      // Dev bypass: ?dev=1 in URL skips auth (uses anon key directly)
+      if (new URLSearchParams(window.location.search).has('dev')) {
+        this.authenticated = true;
+        this.authLoading = false;
+        await this.loadApp();
+        return;
+      }
+
       // Check for existing session or magic link callback
       try {
         const { data: { session } } = await this.sb.auth.getSession();
