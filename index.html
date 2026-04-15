@@ -526,24 +526,28 @@ function explorer() {
     async init() {
       this.sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-      // Listen for auth state changes (handles magic link callback)
-      this.sb.auth.onAuthStateChange((event, session) => {
-        if (event === 'SIGNED_IN' && session) {
+      // Check for existing session or magic link callback
+      try {
+        const { data: { session } } = await this.sb.auth.getSession();
+        if (session) {
+          this.authenticated = true;
+          await this.loadApp();
+        }
+      } catch (e) {
+        console.error('Auth check failed:', e);
+      }
+      this.authLoading = false;
+
+      // Listen for future auth changes (magic link callback)
+      this.sb.auth.onAuthStateChange(async (event, session) => {
+        if (session && !this.authenticated) {
           this.authenticated = true;
           this.authLoading = false;
-          this.loadApp();
-        } else if (event === 'SIGNED_OUT') {
+          await this.loadApp();
+        } else if (!session) {
           this.authenticated = false;
         }
       });
-
-      // Check existing session
-      const { data: { session } } = await this.sb.auth.getSession();
-      if (session) {
-        this.authenticated = true;
-        this.loadApp();
-      }
-      this.authLoading = false;
     },
 
     async loadApp() {
@@ -559,16 +563,17 @@ function explorer() {
       this.authSubmitting = true;
       const { error } = await this.sb.auth.signInWithOtp({
         email: this.authEmail,
-        options: { emailRedirectTo: window.location.origin + window.location.pathname }
+        options: { emailRedirectTo: window.location.href.split('#')[0] }
       });
       this.authSubmitting = false;
       if (error) { this.authError = error.message; return; }
-      this.authSuccess = 'Check your email for the sign-in link.';
+      this.authSuccess = 'Check your email — click the link to sign in.';
     },
 
     async signOut() {
       await this.sb.auth.signOut();
       this.authenticated = false;
+      window.location.reload();
     },
 
     handleHash() {
